@@ -1,0 +1,15 @@
+# Entorno del TP (Python 3.13)
+# Crear:   py -3.13 -m venv C:\Users\<usuario>\.virtualenvs\tp_ia
+# Instalar: <entorno>\Scripts\python.exe -m pip install -r requirements.txt
+# Kernel:  <entorno>\Scripts\python.exe -m ipykernel install --user --name tp_ia --display-name "Python (TP IA)"
+pandas==2.2.3
+numpy==2.5.4
+matplotlib==3.11.2
+seaborn==0.13.2
+pyarrow==26.0.0
+requests==2.34.2
+scikit-learn==1.9.1
+scipy==1.18.1
+xgboost==3.4.1
+lightgbm==4.7.0
+ipykernel==7.4.0
