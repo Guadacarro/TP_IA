@@ -147,4 +147,5 @@ Ideas para profundizar: heatmap hora × día de la semana, tasa por ruta, análi
 
 - Python 3 (local: 3.13), Jupyter Notebook, en Windows.
 - Librerías: `pandas`, `numpy`, `matplotlib`, `seaborn`, `pyarrow`, `requests`, `scikit-learn`, `xgboost`.
-- Pendiente: agregar un `requirements.txt` y una estructura de repo reproducible (FASE 8).
+- Dependencias con versiones fijas en `requirements.txt`. Todos los imports y constantes (`RANDOM_STATE`, `UMBRAL_RETRASO`, nombres de archivos) están en la sección "1. Configuración" del notebook: usalos en lugar de repetir valores.
+- Pendiente: estructura de repo reproducible (FASE 8).

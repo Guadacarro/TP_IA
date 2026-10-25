@@ -11,5 +11,4 @@ requests==2.34.2
 scikit-learn==1.9.1
 scipy==1.18.1
 xgboost==3.4.1
-lightgbm==4.7.0
 ipykernel==7.4.0
