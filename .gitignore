@@ -1,2 +1,5 @@
 flights_2022_es.csv
 flights_sample_3m.csv
+
+# Vuelos de 2023 para la validación fuera de la ventana (pesado, se regenera desde flights_sample_3m.csv)
+generated/flights_2023_es.csv
