@@ -3,3 +3,7 @@ flights_sample_3m.csv
 
 # Vuelos de 2023 para la validación fuera de la ventana (pesado, se regenera desde flights_sample_3m.csv)
 generated/flights_2023_es.csv
+# Salidas que se regeneran corriendo los notebooks
+generated/predicciones_test.csv
+generated/predicciones_validacion.csv
+generated/sintetico/
