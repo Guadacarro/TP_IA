@@ -33,44 +33,106 @@ El canvas ya fue **corregido y aceptado por la profesora**. Es la referencia con
 | **Riesgos** | FP → *alert fatigue* y pérdida de confianza. FN → costos no evitados. Clima: el modelo usa clima **observado**, pero en producción habría **pronóstico a 7 días**. Leakage: el target encoding se tiene que calcular **después del split**. Adopción y drift. |
 | **Impacto** | Costo evitado, conexiones perdidas evitadas, compensaciones, reasignaciones, ahorro de costo y de tiempo operativo. |
 
-## 3. ⚠️ Decisión abierta: datos operativos que NO tenemos
+**Diferencias entre el canvas y la implementación actual** (hay que actualizarlas en el canvas del informe final, no cambiarlas en el código):
+- **Horizonte de predicción: 5 días**, no 7. Todas las features que dependen del resultado de otros vuelos usan datos hasta D−6.
+- **La ABT tiene 41 features** (38 después de RFECV), no 31, organizadas en tres bloques: programación del vuelo, historial de retrasos y clima.
+- **El target encoding se reemplazó** por tasas históricas dinámicas calculadas solo con vuelos de train (ver sección 4).
+- **Acciones del semáforo:** la reubicación preventiva no quedó en ningún nivel, porque según la simulación de impacto no se paga sola.
+
+## 3. Datos operativos que NO tenemos: se eligieron datos sintéticos
 
 La solución del canvas incluye acciones como **reubicar pasajeros, reprogramar vuelos y reasignar tripulación**, y KPIs de costos de compensación, reubicación y operación. **El dataset no tiene esos datos**: no hay pasajeros, conexiones, tripulaciones, costos ni NPS.
 
-La profesora habilitó dos alternativas y **la autora todavía NO eligió**:
+La profesora habilitó dos alternativas (solución teórica o datos sintéticos) y **la autora eligió datos sintéticos**. Están implementados en `simulacion_impacto.ipynb` (FASE 5, ver sección 4.2).
 
-1. **Solución teórica:** describir la capa de acciones y los KPIs de costo de forma conceptual (reglas de negocio, flujo de decisión, cómo se mediría), sin implementarlos con datos.
-2. **Datos sintéticos:** generar datos simulados (por ejemplo, pasajeros con conexión por vuelo, costos de compensación y reubicación, disponibilidad de tripulación) para implementar y simular esa parte de la solución y estimar el impacto (relacionado con la FASE 5: simulaciones / A/B).
+**Reglas para los datos sintéticos:**
+- Tienen que estar **claramente separados y etiquetados**: carpeta `generated/sintetico/`, prefijo `sintetico_` y semilla fija (`RANDOM_STATE = 42`). Nunca se mezclan con los datos reales.
+- Cada supuesto tiene que estar en la celda de configuración del notebook de simulación, con su fuente. Si no tiene fuente directa, se marca como **supuesto** y se cubre con análisis de sensibilidad.
+- Los resultados de la simulación se presentan como **estimaciones del impacto posible, no como resultados observados**.
+- No cambies los supuestos de costo o efectividad para favorecer una política. Si hace falta cambiarlos, consultalo con la autora.
 
-**Reglas para el agente sobre este punto:**
-- **No tomes esta decisión ni avances con ninguna de las dos opciones sin que la autora lo pida explícitamente.** Si una tarea depende de esto, preguntá antes.
-- Si se pide comparar las opciones, presentá pros y contras de cada una sin dar ninguna por elegida.
-- Si en algún momento se eligen datos sintéticos, tienen que estar **claramente separados y etiquetados** como sintéticos (archivo y carpeta propios, prefijo `sintetico_`, semilla fija). Los supuestos de generación tienen que estar documentados y justificados (distribuciones, fuentes de referencia). Nunca se mezclan sin marca con los datos reales.
+## 4. Estado actual
 
-## 4. Estado actual: notebook `tp.ipynb` (PRIMERA VERSIÓN)
+Los dos notebooks están completos en su primera versión y se siguen iterando. Todavía no hay código en módulos `.py`. Moverlo a `src/` queda pendiente para la FASE 8 y requiere confirmación antes de hacerlo.
 
-`tp.ipynb` es un **primer borrador** que se va a ir iterando. No es la versión final: se espera que cambie de estructura, se reescriban secciones y en algún momento parte de la lógica se mueva a módulos `.py`. Tomá lo que hay como punto de partida, no como algo cerrado.
+### 4.1 `tp.ipynb` (notebook principal)
 
-Flujo actual del notebook:
+1. **Configuración:** imports y constantes (`RANDOM_STATE`, `UMBRAL_RETRASO`, `PROPORCION_TEST`, `SUAVIZADO_TASAS`, `UMBRAL_ALERTA`, nombres de archivos).
+2. **Datos:**
+   - Se carga `flights_2022_es.csv`. Si no existe, se genera desde el CSV de Kaggle.
+   - Se toma una muestra del 25% estratificada por mes y se filtran los 92 aeropuertos de origen que concentran el 90% de los vuelos.
+   - El clima viene de Open-Meteo: coordenadas de OurAirports (o su mirror en GitHub) y caché en parquet.
+   - Target: `retrasado = retraso_salida > 15`. Los cancelados y desviados se analizan aparte y se excluyen del target y del modelo. Se conservan solo para contar la congestión programada.
+3. **Calidad:** tipos de variables, separación de variables con leakage y outliers. Los outliers no se tratan, con justificación por grupo de variables.
+4. **EDA:**
+   - target, univariado, causas de la demora, bivariado (hora, día, mes, hora × día, aerolínea, aeropuerto, clima) y resumen con WOE, IV y KS;
+   - multivariado: correlaciones, hora × modelo de negocio, aerolínea × aeropuerto y lluvia × franja;
+   - cierra con **5 insights principales** (4.5).
+5. **ABT:**
+   - **Horizonte de 5 días.** El split train/test (aleatorio, estratificado, 75/25, columna `es_test`) se define **antes** de construir las features.
+   - Features de calendario y congestión programada, más las interacciones `lowcost_x_hora` y `lluvia_x_hora`.
+   - **6 tasas históricas dinámicas**, calculadas **solo con vuelos de train hasta D−6** y con suavizado m=20:
+     - 4 acumuladas: origen, destino, ruta y aerolínea × origen;
+     - 2 recientes, de 7 días: aerolínea y origen.
+   - Control de leakage de las tasas (5.5): recálculo a mano de una muestra e inversión del target de test.
+   - One-hot de aerolínea y EDA de las features construidas, solo con train (5.7).
+   - Resultado: 41 features.
+6. **Modelado:**
+   - **Selección de variables con RFECV** (XGBoost, ROC-AUC): conserva 38 de las 41 variables.
+   - Modelos comparados: regresión logística (con y sin balanceo), XGBoost, LightGBM, MLP y un voting classifier (este último no entra en la elección). Todos usan `RandomizedSearchCV` con recall y la misma CV de 5 folds.
+   - **Modelo elegido: XGBoost (RFECV)**, elegido con la CV y no con el test. En test: ROC-AUC 0,710, KS 0,304 y lift de 2,44 en el decil 1.
+   - También incluye: aporte del feature engineering por bloques, deciles, ganancia, lift, KS y control de overfitting con curva de aprendizaje.
+   - **Semáforo de 4 niveles**, con cortes elegidos en validación:
+     - verde: menos de 0,40;
+     - amarillo: 0,40 a 0,60, con aviso;
+     - naranja: 0,60 a 0,80, con aviso y monitoreo prioritario;
+     - rojo: 0,80 o más, con aviso y reasignación de recursos.
+     
+     El corte de 0,80 sale de la simulación. Con alerta desde amarillo, el recall en test es 0,783.
+   - Exporta `generated/predicciones_test.csv` y `generated/predicciones_validacion.csv`, que usa la simulación.
+   - **SHAP:** importancia global, dirección de los efectos y `factores_vuelo` (los 3 factores de cada alerta, para el dashboard).
+   - **Validación fuera de la ventana con enero a agosto de 2023:**
+     - Usa las funciones `preparar_vuelos` y `construir_abt`, verificadas contra la ABT de 2022.
+     - Evalúa sin reentrenar.
+     - Calcula el PSI del score y de las features.
+7. **Conclusión** con limitaciones y próximos pasos.
 
-1. **Carga y recorte:** lee `flights_sample_3m.csv` (Kaggle, ~3M vuelos de EE.UU.), filtra 2022 y traduce las columnas al español. Guarda el resultado en `flights_2022_es.csv` (si ya existe, lo reutiliza).
-2. **Muestreo:** toma el 25% estratificado por mes (`random_state=42`) y se queda con los aeropuertos de origen que cubren el 90% de los vuelos.
-3. **Target:** `retrasado = retraso_salida > 15` (≈ 21% positivos → desbalance moderado).
-4. **Segunda fuente (clima):** obtiene las coordenadas de los aeropuertos desde OurAirports y el clima diario histórico de 2022 desde la API de Open-Meteo (temperatura media, precipitación, viento máximo). Lo cachea en `clima_2022_por_aeropuerto.parquet` y lo une por `origen` + `fecha_vuelo`.
-5. **EDA:** outliers (IQR, con decisión justificada de no tratarlos), univariado (numéricas y categóricas), resumen estadístico, separación de variables con leakage vs. utilizables, bivariado contra el target (día, franja horaria, mes, volumen vs. tasa, aerolínea, aeropuerto, clima por aeropuerto, boxplots) y multivariado (heatmap de correlaciones).
-6. **ABT:** excluye cancelados y desviados. Features temporales, lags de 7 días (tasa de retraso por aerolínea y por aeropuerto de origen), congestión (`vuelos_dia_origen`), cascada (`retraso_previo_ruta`), one-hot de aerolínea y target encoding de origen y destino.
-7. **Modelos:** Regresión Logística (con y sin `class_weight`) como baseline y XGBoost con `RandomizedSearchCV` (CV estratificado de 5 folds, scoring = recall). Ajuste de umbral (se eligió 0.40), ROC, matrices de confusión e importancia de variables.
-8. **Conclusión** preliminar.
+### 4.2 `simulacion_impacto.ipynb` (FASE 5, datos sintéticos)
 
-### Problemas técnicos conocidos a revisar (no cerrados)
-Están detectados en el código actual. Antes de "corregirlos", confirmá con la autora:
-- **Target encoding antes del split:** `origen_enc` y `destino_enc` se calculan sobre toda la ABT → leakage. El propio canvas lo marca como riesgo. Tiene que calcularse solo con train (idealmente dentro del pipeline / CV).
-- **Split aleatorio con features temporales:** hay lags por fecha, pero el split es aleatorio y estratificado. Para un caso de uso con pronóstico a futuro, conviene evaluar un **split temporal** (entrenar con meses anteriores y testear con meses posteriores).
-- **Ventana de 7 días vs. features del día anterior:** el canvas plantea revisar vuelos con hasta 7 días de anticipación, pero las lags usan `shift(1)` (datos hasta ayer), `retraso_previo_ruta` usa el vuelo anterior de la ruta y `vuelos_dia_origen` cuenta vuelos del mismo día. Hay que revisar qué información estaría realmente disponible al momento de predecir.
-- **Clima observado vs. pronóstico:** riesgo ya reconocido en el canvas. Mencionarlo en las limitaciones o simular ruido de pronóstico.
-- **`reportar_metricas` calcula ROC-AUC con predicciones binarias** en lugar de probabilidades. El AUC correcto se calcula aparte con `predict_proba`.
-- **Selección de variables:** la consigna (FASE 3) pide aplicar técnicas de selección de variables. Hoy la selección es manual (leakage + redundancia). Falta una técnica formal (por ejemplo, mutual information, RFE, permutation importance o SHAP).
-- **Interpretabilidad:** la consigna menciona SHAP. Hoy solo hay `feature_importances_`.
+Estima el ahorro del semáforo frente a gestionar las demoras recién cuando ocurren.
+
+- **Datos:**
+  - Usa las predicciones reales del modelo.
+  - Genera pasajeros por vuelo (binomial, 81,5% de ocupación) y pasajeros con conexión (20,5%).
+  - `retraso_salida` y las causas de la demora se usan solo para **medir el costo** de cada demora, nunca para predecir.
+- **Costos:**
+  - operativo: USD 100,76 por minuto;
+  - compensación: solo en demoras controlables, según los compromisos de cada aerolínea vigentes en 2024-2025;
+  - reubicación reactiva.
+  - Las acciones del semáforo se pagan también en las falsas alarmas.
+- **Secciones 4 a 7, diseño inicial de 3 niveles** (aviso desde 0,40; reasignación y reubicación preventiva desde 0,60):
+  - El escenario base **pierde dinero**.
+  - Calcula los KPIs estratégicos del canvas, las horas de espera evitadas y el ingreso futuro en riesgo. Estos dos últimos son indicadores aparte y no se suman al ahorro.
+  - Incluye sensibilidad a la efectividad de anticiparse y al costo de las acciones.
+- **Sección 8, comparación de políticas:**
+  - Las políticas se comparan **con las predicciones de validación**. Gana la de 4 niveles con reasignación desde 0,80 y sin reubicación preventiva.
+  - Esa política se mide **una sola vez** en test.
+  - De esta comparación sale el semáforo final de `tp.ipynb`.
+- **Sección 9:** las conclusiones están pendientes de redactar; las limitaciones ya están escritas.
+
+### 4.3 Pendientes y mejoras conocidas
+- **Simulación:**
+  - Redactar las conclusiones (sección 9).
+  - En 2023 la precisión del rojo bajó a 56%, y la reasignación se pagaba sola con 61%. Falta evaluar si sigue siendo rentable.
+- **Dashboard (FASE 6):** agregar los factores de `factores_vuelo` como columna en las predicciones exportadas y armar el dashboard en Looker (u otra herramienta validada).
+- **Mejoras del modelo, documentadas pero sin aplicar:** no se aplican porque se decidirían mirando el test o 2023.
+  - entrenar con varios años;
+  - tasas acumuladas con ventana móvil de 365 días;
+  - pronóstico del clima en lugar de clima observado;
+  - calibrar el score, que hoy ordena el riesgo pero no es una probabilidad calibrada;
+  - quitar `es_low_cost`, que tiene SHAP 0.
+- **Fases 7 a 9:** riesgos y ética, monitoreo (PSI mensual, recall, ROC-AUC y tasa del nivel rojo), documentación con la plantilla de la cátedra, repo reproducible y reporte ejecutivo.
+- **Informe final:** actualizar el canvas (ver las diferencias en la sección 2).
 
 ## 5. Consigna: fases y qué se evalúa
 
@@ -97,14 +159,14 @@ El EDA tiene mucho peso en la evaluación y se pide obtener **alrededor de 5 ins
 - Comparar siempre contra la **tasa base de retraso** (~21%).
 - Cerrar el EDA con una sección **"Insights principales"** que los resuma.
 
-Candidatos que ya aparecen en el borrador (consolidarlos, validarlos con números y elegir los ~5 más fuertes):
-1. **Efecto acumulativo por hora:** la tasa de retraso sube a lo largo del día, con pico entre las 17 y las 21 h (las demoras se arrastran).
-2. **Estacionalidad:** picos en meses de alta demanda (junio, julio, diciembre) y los viernes con la mayor tasa semanal. Además, el volumen por sí solo no explica la tasa.
-3. **Aerolínea:** diferencias marcadas en la tasa de retraso entre aerolíneas.
-4. **Aeropuerto + clima:** aeropuertos con más lluvia y viento (por ejemplo MDW, BWI, DAL) tienen tasas más altas, aunque la correlación es débil o moderada.
-5. **Causas operativas > clima:** según las columnas de causa de demora, predominan las causas de aerolínea y de avión tardío frente a las climáticas.
+Insights consolidados en `tp.ipynb` (sección 4.5):
+1. **El retraso se acumula a lo largo del día, sobre todo en las low cost:** la hora es la variable con más señal (IV 0,234), y en las low cost la tasa sube del 15,4% al 45,6% de la mañana a la noche.
+2. **Parte del "efecto aeropuerto" es en realidad un efecto aerolínea:** BWI tiene 31,9% de retrasos, pero sin Southwest baja a 14,5%. Es una variable de confusión.
+3. **Las demoras son operativas, no climáticas:** aerolínea y avión tardío explican el 78% de los minutos de demora; el clima extremo, el 5%.
+4. **La lluvia sola pesa poco, pero combinada con la hora marca el mayor riesgo:** de noche con lluvia fuerte se demora el 46,4% de los vuelos.
+5. **El calendario marca temporadas, pero no alcanza para predecir:** va del 15,9% en octubre al 25,7% en diciembre, con V de Cramér débil.
 
-Ideas para profundizar: heatmap hora × día de la semana, tasa por ruta, análisis del target por bloque de features (los bloques del canvas) y validación estadística de hipótesis (chi², tests de proporciones).
+Si se modifica el EDA, mantené este formato y verificá que los números de los insights sigan coincidiendo con las celdas ejecutadas.
 
 ## 7. Datos y archivos
 
@@ -114,8 +176,15 @@ Ideas para profundizar: heatmap hora × día de la semana, tasa por ruta, análi
 | `flights_2022_es.csv` | Filtro 2022 con columnas en español (~140 MB) | ❌ (en `.gitignore`) |
 | `clima_2022_por_aeropuerto.parquet` | Caché del clima diario de Open-Meteo por aeropuerto | ✅ |
 | `dictionary.md` / `dictionary.html` | Diccionario de datos de las columnas del dataset de vuelos | ✅ |
-| `tp.ipynb` | Notebook principal (primera versión) | ✅ |
-| `generated/` | Carpeta para salidas generadas | — |
+| `tp.ipynb` | Notebook principal: datos, EDA, ABT, modelado, semáforo, SHAP y validación con 2023 | ✅ |
+| `simulacion_impacto.ipynb` | Simulación de impacto con datos sintéticos (FASE 5) | ✅ |
+| `README.md` | Descripción del repo y cómo correrlo | ✅ |
+| `generated/flights_2023_es.csv` | Vuelos de 2023 para la validación fuera de la ventana (se regenera desde el CSV de Kaggle) | ❌ |
+| `generated/clima_2023_por_aeropuerto.parquet` | Caché del clima de 2023 | ✅ |
+| `generated/predicciones_test.csv` / `predicciones_validacion.csv` | Predicciones y nivel del semáforo que exporta `tp.ipynb` (6.11) y que usa la simulación | ❌ (se regeneran) |
+| `generated/sintetico/sintetico_*.csv` | Pasajeros sintéticos por vuelo (test y validación) | ❌ (se regeneran) |
+
+**Orden de ejecución:** primero `tp.ipynb`, que genera las predicciones; después `simulacion_impacto.ipynb`.
 
 **Variables con leakage** (solo se conocen después del vuelo, **nunca** van al modelo, aunque se pueden usar en el EDA): `hora_salida_real`, `retraso_salida`, `tiempo_rodaje_salida`, `despegue`, `aterrizaje`, `tiempo_rodaje_llegada`, `hora_llegada_real`, `retraso_llegada`, `cancelado`, `codigo_cancelacion`, `desviado`, `duracion_real`, `tiempo_en_aire`, `retraso_por_*`.
 
@@ -126,7 +195,8 @@ Ideas para profundizar: heatmap hora × día de la semana, tasa por ruta, análi
 - Las celdas de markdown tienen que **explicar el porqué** de cada decisión. La consigna evalúa la justificación técnica, no solo el código.
 
 **Datos**
-- **No modificar ni sobrescribir** `flights_sample_3m.csv`, `flights_2022_es.csv` ni el parquet de clima. Las salidas nuevas van a `generated/`.
+- **No modificar ni sobrescribir** `flights_sample_3m.csv`, `flights_2022_es.csv` ni los parquet de clima. Las salidas nuevas van a `generated/`, y las sintéticas, a `generated/sintetico/`.
+- **Los datos de 2023 no se usan para decidir nada** (features, tuning, umbrales, modelo). Si se mira 2023 y se cambia algo, deja de ser una validación fuera de la ventana. Lo mismo vale para el test: las decisiones se toman con la CV o con las predicciones de validación.
 - No cargues el CSV de 3M filas si no hace falta: es lento y pesado. Trabajá sobre `flights_2022_es.csv` y, para pruebas rápidas, sobre una muestra.
 - No hagas llamadas a APIs externas si el resultado ya está cacheado.
 - Mantené `random_state=42` en todo lo que tenga aleatoriedad.
@@ -146,6 +216,7 @@ Ideas para profundizar: heatmap hora × día de la semana, tasa por ruta, análi
 ## 9. Entorno
 
 - Python 3 (local: 3.13), Jupyter Notebook, en Windows.
-- Librerías: `pandas`, `numpy`, `matplotlib`, `seaborn`, `pyarrow`, `requests`, `scikit-learn`, `xgboost`.
-- Dependencias con versiones fijas en `requirements.txt`. Todos los imports y constantes (`RANDOM_STATE`, `UMBRAL_RETRASO`, nombres de archivos) están en la sección "1. Configuración" del notebook: usalos en lugar de repetir valores.
+- Librerías: `pandas`, `numpy`, `matplotlib`, `seaborn`, `pyarrow`, `requests`, `scikit-learn`, `scipy`, `xgboost`, `lightgbm`, `shap`.
+- Dependencias con versiones fijas en `requirements.txt`. Los comentarios del archivo explican cómo crear el entorno y el kernel "Python (TP IA)".
+- Todos los imports y constantes (`RANDOM_STATE`, `UMBRAL_RETRASO`, nombres de archivos) están en la sección "1. Configuración" de cada notebook: usalos en lugar de repetir valores.
 - Pendiente: estructura de repo reproducible (FASE 8).
